@@ -11,9 +11,9 @@ variable "relay_instances" {
     index    = number
     az_index = number
   }))
-  
+
   validation {
-    condition = length(var.relay_instances) > 0
+    condition     = length(var.relay_instances) > 0
     error_message = "At least one relay instance must be defined."
   }
 }
@@ -74,4 +74,24 @@ variable "tags" {
   description = "Tags to apply to all resources"
   type        = map(string)
   default     = {}
+}
+
+# Monitoring Variables
+
+variable "enable_monitoring" {
+  description = "Enable CloudWatch-based monitoring. When enabled, relay service logs are shipped to CloudWatch Logs, and a CloudWatch Alarm is created to detect service failures."
+  type        = bool
+  default     = false
+}
+
+variable "alarm_sns_topic_arns" {
+  description = "List of SNS topic ARNs to notify when the relay service alarm triggers. Pass your existing alerting infrastructure (e.g., PagerDuty-connected SNS topic)."
+  type        = list(string)
+  default     = []
+}
+
+variable "log_retention_days" {
+  description = "Number of days to retain CloudWatch Logs (default: 30)"
+  type        = number
+  default     = 30
 }

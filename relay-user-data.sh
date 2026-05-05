@@ -9,6 +9,10 @@ INFISICAL_DOMAIN="${infisical_domain}"
 RELAY_AUTH_SECRET_PARAMETER="${relay_auth_secret_parameter}"
 EIP_ALLOCATION_ID="${eip_allocation_id}"
 
+# Monitoring variables
+ENABLE_MONITORING="${enable_monitoring}"
+CLOUDWATCH_LOG_GROUP="${cloudwatch_log_group}"
+
 # Log all output
 exec > >(tee /var/log/relay-setup.log)
 exec 2>&1
@@ -126,9 +130,72 @@ else
   journalctl -u infisical-relay.service --no-pager -n 20
 fi
 
+# Install and configure CloudWatch Agent if monitoring is enabled
+if [ "$ENABLE_MONITORING" = "true" ]; then
+  echo "========================================="
+  echo "Installing CloudWatch Agent..."
+  echo "========================================="
+
+  # Download and install CloudWatch Agent
+  wget -q https://s3.amazonaws.com/amazoncloudwatch-agent/ubuntu/amd64/latest/amazon-cloudwatch-agent.deb -O /tmp/amazon-cloudwatch-agent.deb
+  dpkg -i /tmp/amazon-cloudwatch-agent.deb
+  rm /tmp/amazon-cloudwatch-agent.deb
+
+  # Create CloudWatch Agent configuration
+  mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
+  cat > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json << EOF
+{
+  "agent": {
+    "run_as_user": "root",
+    "logfile": "/opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log"
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/relay-setup.log",
+            "log_group_name": "$CLOUDWATCH_LOG_GROUP",
+            "log_stream_name": "{instance_id}/$RELAY_NAME/setup"
+          }
+        ]
+      },
+      "journald": {
+        "collect_list": [
+          {
+            "unit": "infisical-relay.service",
+            "log_group_name": "$CLOUDWATCH_LOG_GROUP",
+            "log_stream_name": "{instance_id}/$RELAY_NAME/service"
+          }
+        ]
+      }
+    },
+    "force_flush_interval": 15
+  }
+}
+EOF
+
+  # Start CloudWatch Agent
+  /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+    -a fetch-config \
+    -m ec2 \
+    -s \
+    -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
+  # Verify CloudWatch Agent started
+  sleep 2
+  if systemctl is-active --quiet amazon-cloudwatch-agent; then
+    echo "CloudWatch Agent started successfully!"
+  else
+    echo "WARNING: CloudWatch Agent failed to start"
+    systemctl status amazon-cloudwatch-agent --no-pager || true
+  fi
+fi
+
 echo "========================================="
 echo "Infisical Relay setup completed!"
 echo "Service status: $(systemctl is-active infisical-relay.service)"
+echo "CloudWatch Agent: $(systemctl is-active amazon-cloudwatch-agent 2>/dev/null || echo 'not installed')"
 echo "Public IP: $PUBLIC_IP"
 echo "Relay Name: $RELAY_NAME"
 echo "========================================="

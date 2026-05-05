@@ -2,9 +2,9 @@
 output "relay_server_details" {
   value = {
     for name, instance in var.relay_instances : name => {
-      public_ip        = aws_eip.relay_server[name].public_ip
-      asg_name         = aws_autoscaling_group.relay_server[name].name
-      endpoint         = "${aws_eip.relay_server[name].public_ip}:8443"
+      public_ip         = aws_eip.relay_server[name].public_ip
+      asg_name          = aws_autoscaling_group.relay_server[name].name
+      endpoint          = "${aws_eip.relay_server[name].public_ip}:8443"
       eip_allocation_id = aws_eip.relay_server[name].id
     }
   }
@@ -53,4 +53,31 @@ output "relay_launch_template_ids" {
 output "relay_iam_role_arn" {
   value       = aws_iam_role.relay_server.arn
   description = "IAM role ARN for relay servers"
+}
+
+# Monitoring Outputs
+
+output "monitoring_enabled" {
+  value       = var.enable_monitoring
+  description = "Whether CloudWatch monitoring is enabled"
+}
+
+output "cloudwatch_log_group_name" {
+  value       = var.enable_monitoring ? aws_cloudwatch_log_group.relay_logs[0].name : null
+  description = "CloudWatch Log Group name for relay service logs (null if monitoring disabled)"
+}
+
+output "cloudwatch_log_group_arn" {
+  value       = var.enable_monitoring ? aws_cloudwatch_log_group.relay_logs[0].arn : null
+  description = "CloudWatch Log Group ARN for relay service logs (null if monitoring disabled)"
+}
+
+output "cloudwatch_alarm_name" {
+  value       = var.enable_monitoring ? aws_cloudwatch_metric_alarm.relay_service_failed[0].alarm_name : null
+  description = "CloudWatch Alarm name for service failure detection (null if monitoring disabled)"
+}
+
+output "cloudwatch_alarm_arn" {
+  value       = var.enable_monitoring ? aws_cloudwatch_metric_alarm.relay_service_failed[0].arn : null
+  description = "CloudWatch Alarm ARN for service failure detection (null if monitoring disabled)"
 }
