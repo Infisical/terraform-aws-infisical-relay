@@ -77,6 +77,13 @@ output "cloudwatch_alarm_name" {
   description = "CloudWatch Alarm name for service failure detection (null if monitoring disabled)"
 }
 
+output "cpu_alarm_arns" {
+  value = {
+    for name, alarm in aws_cloudwatch_metric_alarm.relay_cpu_high : name => alarm.arn
+  }
+  description = "CPU alarm ARNs keyed by relay name (empty if enable_cpu_alarm is false)"
+}
+
 output "cloudwatch_alarm_arn" {
   value       = var.enable_monitoring ? aws_cloudwatch_metric_alarm.relay_service_failed[0].arn : null
   description = "CloudWatch Alarm ARN for service failure detection (null if monitoring disabled)"

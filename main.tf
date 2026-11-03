@@ -6,6 +6,8 @@ locals {
   ssh_tunnel_port = 2222
 }
 
+data "aws_partition" "current" {}
+
 # =============================================================================
 # MONITORING RESOURCES
 # =============================================================================
@@ -71,6 +73,33 @@ resource "aws_cloudwatch_metric_alarm" "relay_service_failed" {
   })
 }
 
+# CloudWatch Alarm - high CPU on each relay Auto Scaling Group
+resource "aws_cloudwatch_metric_alarm" "relay_cpu_high" {
+  for_each = var.enable_cpu_alarm ? var.relay_instances : {}
+
+  alarm_name          = "${each.key}-relay-cpu-high"
+  alarm_description   = "Relay ${each.key} average CPU at or above ${var.cpu_alarm_threshold}% for 3 consecutive 5-minute periods"
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 3
+  metric_name         = "CPUUtilization"
+  namespace           = "AWS/EC2"
+  period              = 300
+  statistic           = "Average"
+  threshold           = var.cpu_alarm_threshold
+  treat_missing_data  = "missing"
+
+  dimensions = {
+    AutoScalingGroupName = aws_autoscaling_group.relay_server[each.key].name
+  }
+
+  alarm_actions = var.alarm_sns_topic_arns
+  ok_actions    = var.alarm_sns_topic_arns
+
+  tags = merge(var.tags, {
+    Name = "${each.key}-relay-cpu-alarm"
+  })
+}
+
 # IAM role for relay instances
 resource "aws_iam_role" "relay_server" {
   name = "${var.name_prefix}-relay-role"
@@ -129,10 +158,18 @@ resource "aws_iam_role_policy" "relay_server" {
           Action = [
             "logs:DescribeLogGroups"
           ]
-          Resource = "arn:aws:logs:${var.aws_region}:*:log-group:*"
+          Resource = "arn:${data.aws_partition.current.partition}:logs:${var.aws_region}:*:log-group:*"
         }
     ] : [])
   })
+}
+
+# Session Manager access for administration
+resource "aws_iam_role_policy_attachment" "relay_server_ssm" {
+  count = var.enable_ssm_session_manager ? 1 : 0
+
+  role       = aws_iam_role.relay_server.name
+  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 # IAM instance profile
@@ -179,13 +216,16 @@ resource "aws_security_group" "relay_server" {
     description = "SSH reverse tunnel from gateways"
   }
 
-  # Inbound: SSH access for administration
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "SSH access for administration"
+  # Inbound: SSH access for administration, only from admin_ssh_cidr_blocks
+  dynamic "ingress" {
+    for_each = length(var.admin_ssh_cidr_blocks) > 0 ? [1] : []
+    content {
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = var.admin_ssh_cidr_blocks
+      description = "SSH access for administration"
+    }
   }
 
   # Outbound: All traffic
@@ -211,6 +251,13 @@ resource "aws_launch_template" "relay_server" {
 
   vpc_security_group_ids = [aws_security_group.relay_server.id]
 
+  # Require IMDSv2
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
+
   iam_instance_profile {
     name = aws_iam_instance_profile.relay_server.name
   }
@@ -222,6 +269,7 @@ resource "aws_launch_template" "relay_server" {
     infisical_domain            = var.infisical_domain
     relay_auth_secret_parameter = var.relay_auth_secret_parameter
     eip_allocation_id           = aws_eip.relay_server[each.key].id
+    admin_ssh_cidr_blocks       = join(" ", var.admin_ssh_cidr_blocks)
     # Monitoring configuration
     enable_monitoring    = var.enable_monitoring ? "true" : "false"
     cloudwatch_log_group = var.enable_monitoring ? aws_cloudwatch_log_group.relay_logs[0].name : ""
@@ -289,6 +337,11 @@ resource "aws_autoscaling_group" "relay_server" {
     value               = "infisical-relay-asg"
     propagate_at_launch = false
   }
+
+  depends_on = [
+    aws_iam_role_policy.relay_server,
+    aws_iam_role_policy_attachment.relay_server_ssm,
+  ]
 
   lifecycle {
     create_before_destroy = true
