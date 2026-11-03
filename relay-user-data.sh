@@ -8,6 +8,7 @@ PRIMARY_REGION="${primary_region}"
 INFISICAL_DOMAIN="${infisical_domain}"
 RELAY_AUTH_SECRET_PARAMETER="${relay_auth_secret_parameter}"
 EIP_ALLOCATION_ID="${eip_allocation_id}"
+ADMIN_SSH_CIDR_BLOCKS="${admin_ssh_cidr_blocks}"
 
 # Monitoring variables
 ENABLE_MONITORING="${enable_monitoring}"
@@ -43,9 +44,10 @@ apt-get update && apt-get install -y infisical
 
 # Get instance metadata
 echo "Retrieving instance metadata..."
-TOKEN=$(curl -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
-INSTANCE_ID=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
-PRIVATE_IP=$(curl -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+IMDS_CURL="curl -sS --fail --retry 5 --retry-delay 2 --retry-connrefused"
+TOKEN=$($IMDS_CURL -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+INSTANCE_ID=$($IMDS_CURL -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+PRIVATE_IP=$($IMDS_CURL -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
 
 echo "Instance ID: $INSTANCE_ID"
 echo "Private IP: $PRIVATE_IP"
@@ -98,7 +100,10 @@ echo "Infisical Domain: $INFISICAL_DOMAIN"
 # Configure firewall (ufw)
 echo "Configuring firewall..."
 ufw --force enable
-ufw allow 22/tcp    # SSH access
+# SSH access, only from admin_ssh_cidr_blocks
+for cidr in $ADMIN_SSH_CIDR_BLOCKS; do
+  ufw allow from "$cidr" to any port 22 proto tcp
+done
 ufw allow 8443/tcp  # Relay platform communication
 ufw allow 2222/tcp  # SSH reverse tunnel
 
