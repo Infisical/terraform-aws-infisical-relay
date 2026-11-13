@@ -140,8 +140,8 @@ resource "aws_iam_role_policy" "relay_server" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    # Matches what relay-user-data.sh calls at boot: ssm get-parameter, ec2 associate-address and
-    # ec2 describe-addresses. The relay process itself makes no AWS calls.
+    # The base statements cover exactly what relay-user-data.sh calls at boot: ssm get-parameter,
+    # ec2 associate-address and ec2 describe-addresses. The relay process itself makes no AWS calls.
     Statement = concat([
       {
         Sid      = "ReadRelayAuthSecret"
@@ -151,12 +151,11 @@ resource "aws_iam_role_policy" "relay_server" {
       },
       {
         # AssociateAddress is authorized against the Elastic IP and the target instance (or ENI).
+        # No DisassociateAddress: associating moves the address automatically, and terminating an
+        # instance releases it.
         Sid    = "AssociateOwnElasticIps"
         Effect = "Allow"
-        Action = [
-          "ec2:AssociateAddress",
-          "ec2:DisassociateAddress"
-        ]
+        Action = ["ec2:AssociateAddress"]
         Resource = concat(local.relay_eip_arns, [
           "arn:${local.partition}:ec2:${var.aws_region}:${local.account_id}:instance/*",
           "arn:${local.partition}:ec2:${var.aws_region}:${local.account_id}:network-interface/*"

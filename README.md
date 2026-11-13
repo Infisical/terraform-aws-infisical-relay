@@ -42,11 +42,16 @@ For shell access, use AWS Systems Manager Session Manager. With `enable_ssm_sess
 
 ## IAM permissions
 
-The relay role can only do what the startup script needs:
+The relay role gets these permissions for the startup script:
 
-- `ssm:GetParameter` on the `relay_auth_secret_parameter` parameter in `primary_region`. No KMS permission is granted, so the parameter must use the default `aws/ssm` key.
-- `ec2:AssociateAddress` and `ec2:DisassociateAddress` on this module's own Elastic IPs.
+- `ssm:GetParameter` on the `relay_auth_secret_parameter` parameter in `primary_region`. No KMS permission is granted, so the parameter must use the default `aws/ssm` key. The variable must be a plain parameter name, not an ARN or a `name:version` selector.
+- `ec2:AssociateAddress` on this module's Elastic IPs, plus any instance and network interface in `aws_region`, because AWS also checks the target of the association. All relays in one module share the role, so any of them can move another relay's address within the same module. Use one module per relay if that matters.
 - `ec2:DescribeAddresses`, which has no resource-level permissions.
+
+On top of these:
+
+- With `enable_ssm_session_manager = true`, a separate policy grants the minimal Session Manager permissions described above.
+- With `enable_monitoring = true`, the role can write to the relay log group and call `logs:DescribeLogGroups`.
 
 ## Instance metadata
 

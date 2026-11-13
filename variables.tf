@@ -90,9 +90,16 @@ variable "infisical_domain" {
 }
 
 variable "relay_auth_secret_parameter" {
-  description = "SSM parameter name containing the relay auth secret"
+  description = "Name of the SSM parameter containing the relay auth secret, in primary_region (for example /infisical-relay/INFISICAL_RELAY_AUTH_SECRET). A plain name only: not an ARN, and no :version or :label suffix."
   type        = string
   default     = "/infisical-relay/INFISICAL_RELAY_AUTH_SECRET"
+
+  # The relay role is granted ssm:GetParameter on the ARN built from this name. An ARN or a
+  # version/label selector would build an ARN that matches nothing and the relay would fail at boot.
+  validation {
+    condition     = can(regex("^/?[A-Za-z0-9_./-]+$", var.relay_auth_secret_parameter))
+    error_message = "relay_auth_secret_parameter must be a plain SSM parameter name (letters, numbers, _ . - /), not an ARN or a name:version / name:label selector."
+  }
 }
 
 variable "tags" {
