@@ -4,9 +4,22 @@
 locals {
   relay_port      = 8443
   ssh_tunnel_port = 2222
+
+  account_id = data.aws_caller_identity.current.account_id
+  partition  = data.aws_partition.current.partition
+
+  # The startup script reads the secret from primary_region, which can differ from aws_region.
+  relay_auth_secret_arn = "arn:${local.partition}:ssm:${var.primary_region}:${local.account_id}:parameter/${trimprefix(var.relay_auth_secret_parameter, "/")}"
+
+  # Only this module's Elastic IPs, so a relay can't take other addresses in the account.
+  relay_eip_arns = [
+    for eip in aws_eip.relay_server : "arn:${local.partition}:ec2:${var.aws_region}:${local.account_id}:elastic-ip/${eip.allocation_id}"
+  ]
 }
 
 data "aws_partition" "current" {}
+
+data "aws_caller_identity" "current" {}
 
 # =============================================================================
 # MONITORING RESOURCES
@@ -127,17 +140,33 @@ resource "aws_iam_role_policy" "relay_server" {
 
   policy = jsonencode({
     Version = "2012-10-17"
+    # Matches what relay-user-data.sh calls at boot: ssm get-parameter, ec2 associate-address and
+    # ec2 describe-addresses. The relay process itself makes no AWS calls.
     Statement = concat([
       {
+        Sid      = "ReadRelayAuthSecret"
+        Effect   = "Allow"
+        Action   = ["ssm:GetParameter"]
+        Resource = local.relay_auth_secret_arn
+      },
+      {
+        # AssociateAddress is authorized against the Elastic IP and the target instance (or ENI).
+        Sid    = "AssociateOwnElasticIps"
         Effect = "Allow"
         Action = [
-          "ssm:GetParameter*",
-          "ssm:DescribeParameters",
-          "ec2:DescribeInstances",
-          "ec2:DescribeAddresses",
           "ec2:AssociateAddress",
           "ec2:DisassociateAddress"
         ]
+        Resource = concat(local.relay_eip_arns, [
+          "arn:${local.partition}:ec2:${var.aws_region}:${local.account_id}:instance/*",
+          "arn:${local.partition}:ec2:${var.aws_region}:${local.account_id}:network-interface/*"
+        ])
+      },
+      {
+        # DescribeAddresses has no resource-level permissions.
+        Sid      = "DescribeAddresses"
+        Effect   = "Allow"
+        Action   = ["ec2:DescribeAddresses"]
         Resource = "*"
       }
       ],
@@ -164,12 +193,32 @@ resource "aws_iam_role_policy" "relay_server" {
   })
 }
 
-# Session Manager access for administration
-resource "aws_iam_role_policy_attachment" "relay_server_ssm" {
+# Session Manager access for administration. AWS's minimal Session Manager policy, not
+# AmazonSSMManagedInstanceCore: that one also grants ssm:GetParameter(s) on every parameter in the
+# account, which would undo the scoping above.
+resource "aws_iam_role_policy" "relay_server_ssm" {
   count = var.enable_ssm_session_manager ? 1 : 0
 
-  role       = aws_iam_role.relay_server.name
-  policy_arn = "arn:${data.aws_partition.current.partition}:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  name = "${var.name_prefix}-relay-session-manager"
+  role = aws_iam_role.relay_server.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "SessionManager"
+        Effect = "Allow"
+        Action = [
+          "ssm:UpdateInstanceInformation",
+          "ssmmessages:CreateControlChannel",
+          "ssmmessages:CreateDataChannel",
+          "ssmmessages:OpenControlChannel",
+          "ssmmessages:OpenDataChannel"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
 }
 
 # IAM instance profile
@@ -340,7 +389,7 @@ resource "aws_autoscaling_group" "relay_server" {
 
   depends_on = [
     aws_iam_role_policy.relay_server,
-    aws_iam_role_policy_attachment.relay_server_ssm,
+    aws_iam_role_policy.relay_server_ssm,
   ]
 
   lifecycle {

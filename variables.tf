@@ -78,7 +78,7 @@ variable "admin_ssh_cidr_blocks" {
 }
 
 variable "enable_ssm_session_manager" {
-  description = "Attach AmazonSSMManagedInstanceCore to the relay role so instances can be reached through SSM Session Manager"
+  description = "Grant the relay role the minimal Session Manager permissions so instances can be reached through SSM Session Manager. Deliberately not AmazonSSMManagedInstanceCore, which also allows reading every SSM parameter in the account."
   type        = bool
   default     = true
 }

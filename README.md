@@ -38,7 +38,15 @@ Ports 8443 and 2222 are the relay's service ports. Port 22 stays closed in both 
 
 The security group follows `admin_ssh_cidr_blocks` on every apply. The host firewall is configured at boot, so a change to `admin_ssh_cidr_blocks` reaches ufw only on instances launched after the change (see [Upgrading from v0.0.3](#upgrading-from-v003) for how to replace an instance). The module does not set an EC2 key pair; SSH login uses keys from the AMI or EC2 Instance Connect.
 
-For shell access, use AWS Systems Manager Session Manager. With `enable_ssm_session_manager = true` (the default), the module attaches `AmazonSSMManagedInstanceCore` to the relay role. Access is governed by IAM through `ssm:StartSession`. Set `enable_ssm_session_manager = false` to opt out. Session Manager needs no inbound ports. It does need the SSM agent on the AMI (preinstalled on Canonical's Ubuntu 22.04 LTS AMIs) and outbound HTTPS, which the default egress rule allows.
+For shell access, use AWS Systems Manager Session Manager. With `enable_ssm_session_manager = true` (the default), the module gives the relay role AWS's minimal Session Manager permissions (`ssm:UpdateInstanceInformation` and the four `ssmmessages:*Channel` actions). It deliberately does not attach `AmazonSSMManagedInstanceCore`, which also grants `ssm:GetParameter` and `ssm:GetParameters` on every parameter in the account. If your account's Session Manager preferences turn on KMS encryption or S3/CloudWatch session logging, the relay role also needs those permissions. Access is governed by IAM through `ssm:StartSession`. Set `enable_ssm_session_manager = false` to opt out. Session Manager needs no inbound ports. It does need the SSM agent on the AMI (preinstalled on Canonical's Ubuntu 22.04 LTS AMIs) and outbound HTTPS, which the default egress rule allows.
+
+## IAM permissions
+
+The relay role can only do what the startup script needs:
+
+- `ssm:GetParameter` on the `relay_auth_secret_parameter` parameter in `primary_region`. No KMS permission is granted, so the parameter must use the default `aws/ssm` key.
+- `ec2:AssociateAddress` and `ec2:DisassociateAddress` on this module's own Elastic IPs.
+- `ec2:DescribeAddresses`, which has no resource-level permissions.
 
 ## Instance metadata
 
@@ -56,7 +64,7 @@ Both alarms notify `alarm_sns_topic_arns` on alarm and on recovery. The CPU alar
 | Name | Type | Default | Description |
 | ---- | ---- | ------- | ----------- |
 | `admin_ssh_cidr_blocks` | `list(string)` | `[]` | IPv4 CIDR blocks (`/8` or narrower) allowed to reach port 22. Empty keeps port 22 closed. |
-| `enable_ssm_session_manager` | `bool` | `true` | Attach `AmazonSSMManagedInstanceCore` to the relay role. |
+| `enable_ssm_session_manager` | `bool` | `true` | Grant the relay role the minimal Session Manager permissions. |
 | `enable_cpu_alarm` | `bool` | `false` | Create a CPU alarm per relay Auto Scaling Group. |
 | `cpu_alarm_threshold` | `number` | `80` | CPU percentage at or above which the alarm fires. |
 
@@ -66,7 +74,7 @@ Both alarms notify `alarm_sns_topic_arns` on alarm and on recovery. The CPU alar
 
 When the changes take effect:
 
-- **On apply:** the security group and IAM changes, and CPU alarms if enabled. Instances may take a few minutes to register with Session Manager after the policy is attached.
+- **On apply:** the security group and IAM changes, and CPU alarms if enabled. The narrower IAM permissions are only used at boot, so running relays are unaffected until they are replaced. Instances may take a few minutes to register with Session Manager after the policy is attached.
 - **On instance replacement:** IMDSv2 and the host firewall settings, which are part of the launch template. The module does not configure an instance refresh, so these apply to instances launched after the upgrade.
 
 To roll a relay onto the new launch template, terminate its instance and let the Auto Scaling Group launch a replacement, or start an instance refresh on its Auto Scaling Group. Each relay runs a single instance, so the relay is unavailable while the replacement boots and re-associates its Elastic IP, typically a few minutes. The public IP does not change.
